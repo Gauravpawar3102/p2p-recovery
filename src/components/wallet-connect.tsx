@@ -122,7 +122,12 @@ export function WalletConnect({
   const wallets = [
     inAppWallet({
       auth: {
-        options: ['google', 'passkey', 'phone'],
+        options: [
+          "google",
+          "email",
+          "phone"
+
+        ],
       },
       smartAccount: {
         chain: selectedChain,
