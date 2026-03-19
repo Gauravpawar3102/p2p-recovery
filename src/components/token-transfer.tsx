@@ -9,6 +9,7 @@ import {
     ERC20_ABI,
     SMART_ACCOUNT_ABI,
     ENTRY_POINT_ABI,
+    ACCOUNT_FACTORY_ABI,
     getUserOpHash,
     formatUserOpForBundler,
     bundlerRpc,
@@ -292,6 +293,120 @@ export function TokenTransfer({ network }: TokenTransferProps) {
         }
 
         setIsLoading(true)
+
+        // Direct execute path - for networks without bundler (e.g. B3)
+        // Admin EOA calls execute() directly on the smart wallet contract
+        if (networkConfig.useDirectExecute) {
+            try {
+                if (!wallet || !account) {
+                    throw new Error('Wallet not connected')
+                }
+
+                // Get the admin/owner account that controls the smart wallet
+                let adminAccount: any = null
+                if (wallet.getAdminAccount) {
+                    try { adminAccount = await wallet.getAdminAccount() } catch {}
+                }
+                if (!adminAccount) adminAccount = wallet.getAccount()
+                if (!adminAccount) adminAccount = account
+
+                if (!adminAccount?.sendTransaction) {
+                    throw new Error('Wallet does not support direct transactions. Please use a compatible wallet.')
+                }
+
+                const publicClient = createPublicClient({
+                    chain: networkConfig.chain,
+                    transport: http(networkConfig.chain.rpcUrls.default.http[0]),
+                })
+
+                // Check if smart account is deployed, deploy if needed
+                const deployed = await isAccountDeployed(smartAccountAddress as Address, network)
+                if (!deployed) {
+                    setSuccess('Deploying smart account on ' + NETWORK_LABELS[network] + '...')
+                    const deployCallData = encodeFunctionData({
+                        abi: ACCOUNT_FACTORY_ABI,
+                        functionName: 'createAccount',
+                        args: [adminAccount.address as Address, '0x'],
+                    })
+
+                    const deployResult = await adminAccount.sendTransaction({
+                        to: networkConfig.factoryAddress,
+                        data: deployCallData,
+                        chainId: networkConfig.chain.id,
+                    })
+
+                    await publicClient.waitForTransactionReceipt({
+                        hash: deployResult.transactionHash as `0x${string}`,
+                    })
+                    setSuccess('Smart account deployed! Transferring tokens...')
+                    window.dispatchEvent(new Event('smartAccountUpdated'))
+                }
+
+                // Encode calldata for the transfer
+                const isNativeToken = tokenToTransfer.address === "0x0000000000000000000000000000000000000000"
+                let executeCallData: `0x${string}`
+
+                if (isNativeToken) {
+                    executeCallData = encodeFunctionData({
+                        abi: SMART_ACCOUNT_ABI,
+                        functionName: 'execute',
+                        args: [finalRecipient as Address, transferAmount, '0x' as `0x${string}`],
+                    })
+                } else {
+                    const transferCallData = encodeFunctionData({
+                        abi: ERC20_ABI,
+                        functionName: 'transfer',
+                        args: [finalRecipient as Address, transferAmount],
+                    })
+                    executeCallData = encodeFunctionData({
+                        abi: SMART_ACCOUNT_ABI,
+                        functionName: 'execute',
+                        args: [tokenToTransfer.address as Address, 0n, transferCallData],
+                    })
+                }
+
+                // Send direct transaction from admin EOA to smart wallet
+                const result = await adminAccount.sendTransaction({
+                    to: smartAccountAddress,
+                    data: executeCallData,
+                    chainId: networkConfig.chain.id,
+                })
+
+                setTxHash(result.transactionHash)
+                setSuccess(`Transaction submitted! Waiting for confirmation...`)
+
+                // Wait for receipt
+                const receipt = await publicClient.waitForTransactionReceipt({
+                    hash: result.transactionHash as `0x${string}`,
+                })
+
+                if (receipt.status === 'success') {
+                    const actionMsg = transferMode === 'recover'
+                        ? `Recovery successful! ${amount} ${tokenToTransfer.symbol} sent to owner address`
+                        : `Transfer successful! ${amount} ${tokenToTransfer.symbol} sent to ${finalRecipient}`
+                    setSuccess(actionMsg)
+                    await fetchBalance(smartAccountAddress as Address)
+                    if (transferMode === 'send') setRecipient('')
+                    setAmount('')
+                    window.dispatchEvent(new Event('smartAccountUpdated'))
+                } else {
+                    setError('Transaction reverted on chain')
+                }
+            } catch (err: any) {
+                const errorMessage = err.message || 'Failed to transfer tokens'
+                if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance') || errorMessage.includes('exceeds the balance')) {
+                    // For direct execute, the OWNER wallet needs gas, not the smart account
+                    setFundingAddress(ownerAddress)
+                    setShowFundingModal(true)
+                } else {
+                    setError(errorMessage)
+                }
+                console.error('Direct execute transfer error:', err)
+            } finally {
+                setIsLoading(false)
+            }
+            return
+        }
 
         try {
             if (!wallet || !account) {
@@ -817,7 +932,10 @@ export function TokenTransfer({ network }: TokenTransferProps) {
 
                         {/* Message */}
                         <p className="text-center text-sm text-neutral-600 dark:text-neutral-400 mb-5">
-                            Your smart account needs native tokens ({NETWORKS[network].chain.nativeCurrency.symbol}) to pay for transaction gas fees.
+                            {NETWORKS[network].useDirectExecute
+                                ? `Your owner wallet needs ${NETWORKS[network].chain.nativeCurrency.symbol} to pay for gas fees on ${NETWORK_LABELS[network]}.`
+                                : `Your smart account needs native tokens (${NETWORKS[network].chain.nativeCurrency.symbol}) to pay for transaction gas fees.`
+                            }
                         </p>
 
                         {/* Address Box */}
