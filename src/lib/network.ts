@@ -464,12 +464,11 @@ export const NETWORKS: Record<NetworkKey, NetworkConfig> = {
     },
     b3: {
         chain: b3Chain,
-        bundlerUrl: '', // Not needed - uses direct execute from admin wallet
+        bundlerUrl: `https://8333.bundler.thirdweb.com/${process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID}`,
         entryPoint: '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789' as Address,
         factoryAddress: '0xdE320c2E2b4953883f61774c006f9057A55B97D1' as Address,
         usdcAddress: '0x2af198a85f9aa11cd6042a0596fbf23978514da3' as Address,
         usdcDecimals: 6,
-        useDirectExecute: true,
     },
 };
 

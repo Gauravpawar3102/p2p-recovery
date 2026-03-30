@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Address, encodeFunctionData, createPublicClient, http } from 'viem'
+import { Address } from 'viem'
 import { deriveSmartAccountAddress, isAccountDeployed, deploySmartAccountWithWallet, ACCOUNT_FACTORY_ABI } from '@/lib/smart-account'
 import { saveSmartAccountData } from '@/lib/storage'
 import { Copy, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
@@ -108,54 +108,6 @@ export function SmartAccountDisplay({ network, p2pUserWallet, onSmartAccountChan
 
     try {
       const networkConfig = NETWORKS[network]
-
-      // Direct execute deploy path - for networks without bundler (e.g. B3)
-      if (networkConfig.useDirectExecute) {
-        let adminAccount: any = null
-        if (wallet.getAdminAccount) {
-          try { adminAccount = await wallet.getAdminAccount() } catch {}
-        }
-        if (!adminAccount) adminAccount = wallet.getAccount()
-        if (!adminAccount) adminAccount = account
-
-        if (!adminAccount?.sendTransaction) {
-          setDeployError('Wallet does not support direct transactions')
-          return
-        }
-
-        const deployCallData = encodeFunctionData({
-          abi: ACCOUNT_FACTORY_ABI,
-          functionName: 'createAccount',
-          args: [adminAccount.address as Address, '0x'],
-        })
-
-        const deployResult = await adminAccount.sendTransaction({
-          to: networkConfig.factoryAddress,
-          data: deployCallData,
-          chainId: networkConfig.chain.id,
-        })
-
-        const publicClient = createPublicClient({
-          chain: networkConfig.chain,
-          transport: http(networkConfig.chain.rpcUrls.default.http[0]),
-        })
-
-        const receipt = await publicClient.waitForTransactionReceipt({
-          hash: deployResult.transactionHash as `0x${string}`,
-        })
-
-        if (receipt.status === 'success') {
-          setDeploySuccess(
-            `Deployment successful! Transaction: ${deployResult.transactionHash.slice(0, 10)}...${deployResult.transactionHash.slice(-8)}`
-          )
-          const deployed = await isAccountDeployed(smartAccountAddress as Address, network)
-          setIsDeployed(deployed)
-          setTimeout(() => setDeploySuccess(''), 5000)
-        } else {
-          setDeployError('Deployment transaction reverted')
-        }
-        return
-      }
 
       // Standard ERC-4337 deploy path (via bundler)
       const result = await deploySmartAccountWithWallet(
